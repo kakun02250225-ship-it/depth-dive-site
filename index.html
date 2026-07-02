@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEPTH DIVE — 地球潜行</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: auto; }
+
+  body {
+    background: #000;
+    color: #e8e4da;
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* スクロール領域(実体はこの高さぶんスクロールする) */
+  #scroll-space {
+    position: relative;
+    height: 900vh;
+  }
+
+  /* 描画キャンバスは固定 */
+  #canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 0;
+  }
+
+  /* ───────── HUD ───────── */
+  #hud {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  #title {
+    position: absolute;
+    top: 24px;
+    left: 28px;
+    letter-spacing: 0.35em;
+    font-size: 13px;
+    opacity: 0.85;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+  }
+  #title strong {
+    display: block;
+    font-size: 20px;
+    letter-spacing: 0.5em;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  /* 深度ゲージ */
+  #gauge {
+    position: absolute;
+    left: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 46vh;
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+  }
+  #gauge-bar {
+    position: relative;
+    width: 2px;
+    background: rgba(255,255,255,0.18);
+    border-radius: 2px;
+  }
+  #gauge-fill {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 0%;
+    background: linear-gradient(180deg, #cfd6dd 0%, #b08a5a 25%, #ff7a1a 55%, #ff3b00 75%, #7b5cff 90%, #4dc3ff 100%);
+    border-radius: 2px;
+  }
+  #gauge-marker {
+    position: absolute;
+    left: 50%;
+    top: 0%;
+    width: 10px;
+    height: 10px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 12px rgba(255,255,255,0.9);
+  }
+  #gauge-labels {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    opacity: 0.75;
+  }
+  #gauge-labels span {
+    transition: color 0.6s, opacity 0.6s, text-shadow 0.6s;
+    opacity: 0.5;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+  }
+  #gauge-labels span.active {
+    opacity: 1;
+    font-weight: 600;
+  }
+  #gauge-labels span:nth-child(1).active { color: #e8ecef; text-shadow: 0 0 10px rgba(220,230,240,0.7); }
+  #gauge-labels span:nth-child(2).active { color: #e6b96f; text-shadow: 0 0 10px rgba(230,185,111,0.7); }
+  #gauge-labels span:nth-child(3).active { color: #ff9040; text-shadow: 0 0 12px rgba(255,110,30,0.9); }
+  #gauge-labels span:nth-child(4).active { color: #a08cff; text-shadow: 0 0 12px rgba(140,110,255,0.9); }
+
+  /* 深度表示 */
+  #depth-readout {
+    position: absolute;
+    right: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: right;
+    text-shadow: 0 1px 10px rgba(0,0,0,0.85);
+  }
+  #depth-value {
+    font-size: clamp(22px, 4vw, 38px);
+    font-weight: 200;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+  }
+  #depth-label {
+    font-size: 10px;
+    letter-spacing: 0.45em;
+    opacity: 0.65;
+    margin-top: 6px;
+  }
+  #temp-value {
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    opacity: 0.7;
+    margin-top: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* スクロールヒント */
+  #hint {
+    position: absolute;
+    bottom: 34px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.5em;
+    text-indent: 0.5em;
+    opacity: 0.85;
+    transition: opacity 1s;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+  }
+  #hint.hidden { opacity: 0; }
+  #hint .arrow {
+    display: block;
+    margin: 12px auto 0;
+    width: 1px;
+    height: 34px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.9), transparent);
+    animation: drip 1.8s ease-in-out infinite;
+  }
+  @keyframes drip {
+    0%   { transform: scaleY(0.2); transform-origin: top; opacity: 0; }
+    40%  { transform: scaleY(1);   opacity: 1; }
+    100% { transform: scaleY(1) translateY(10px); opacity: 0; }
+  }
+
+  /* ───────── 階層セクションの文字 ───────── */
+  .section {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    z-index: 1;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    padding: 0 8vw;
+  }
+  .section-inner {
+    max-width: 640px;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(50px);
+    transition: opacity 1.4s ease, transform 1.4s ease;
+    padding: 48px 40px;
+    background: radial-gradient(ellipse 70% 60% at center, rgba(0,0,0,0.55), rgba(0,0,0,0) 72%);
+    border-radius: 40px;
+  }
+  .section.show .section-inner {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .section .en {
+    font-size: 11px;
+    letter-spacing: 0.7em;
+    text-indent: 0.7em;
+    opacity: 0.7;
+    margin-bottom: 14px;
+  }
+  .section h2 {
+    font-size: clamp(34px, 7vw, 64px);
+    font-weight: 300;
+    letter-spacing: 0.3em;
+    text-indent: 0.3em;
+    margin-bottom: 22px;
+    text-shadow: 0 2px 30px rgba(0,0,0,0.8);
+  }
+  .section p {
+    font-size: clamp(12px, 1.6vw, 15px);
+    line-height: 2.3;
+    letter-spacing: 0.12em;
+    opacity: 0.9;
+    text-shadow: 0 1px 12px rgba(0,0,0,0.9);
+  }
+  .section .depth-tag {
+    display: inline-block;
+    margin-top: 26px;
+    padding: 7px 22px;
+    font-size: 10px;
+    letter-spacing: 0.35em;
+    text-indent: 0.35em;
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 999px;
+    opacity: 0.8;
+  }
+
+  #sec-summit  { top: 12%; }
+  #sec-bedrock { top: 36%; }
+  #sec-magma   { top: 64%; }
+  #sec-mantle  { top: 88%; }
+
+  #sec-summit  h2 { color: #f2f4f6; }
+  #sec-bedrock h2 { color: #eecf96; }
+  #sec-magma   h2 { color: #fff1dc; text-shadow: 0 0 24px rgba(120,20,0,0.95), 0 2px 10px rgba(0,0,0,0.8); }
+  #sec-mantle  h2 { color: #c4b5ff; text-shadow: 0 0 40px rgba(120,90,255,0.6); }
+
+  /* 最深部メッセージ */
+  #finale {
+    position: absolute;
+    top: 97%;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    z-index: 1;
+    pointer-events: none;
+  }
+  #finale .section-inner p { font-size: 13px; letter-spacing: 0.4em; text-indent: 0.4em; }
+
+  /* ローディング */
+  #loader {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    transition: opacity 0.9s;
+  }
+  #loader.done { opacity: 0; pointer-events: none; }
+  #loader .ring {
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-top-color: rgba(255,255,255,0.85);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loader .txt { font-size: 10px; letter-spacing: 0.6em; text-indent: 0.6em; opacity: 0.7; }
+
+  @media (max-width: 640px) {
+    #gauge { height: 38vh; left: 18px; }
+    #title { left: 18px; }
+    #depth-readout { right: 18px; }
+    #gauge-labels { font-size: 9px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #hint .arrow { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loader">
+  <div class="ring"></div>
+  <div class="txt">地層を生成中</div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div id="title"><strong>DEPTH DIVE</strong>地球潜行 — スクロールで地中へ</div>
+
+  <div id="gauge">
+    <div id="gauge-bar">
+      <div id="gauge-fill"></div>
+      <div id="gauge-marker"></div>
+    </div>
+    <div id="gauge-labels">
+      <span>山頂</span>
+      <span>岩盤</span>
+      <span>マグマ</span>
+      <span>マントル</span>
+    </div>
+  </div>
+
+  <div id="depth-readout">
+    <div id="depth-value">標高 3,776 m</div>
+    <div id="depth-label">ALTITUDE / DEPTH</div>
+    <div id="temp-value">-38 ℃</div>
+  </div>
+
+  <div id="hint">
+    スクロールして潜る
+    <span class="arrow"></span>
+  </div>
+</div>
+
+<div id="scroll-space">
+  <div class="section" id="sec-summit">
+    <div class="section-inner">
+      <div class="en">LAYER 01 — SUMMIT</div>
+      <h2>山頂</h2>
+      <p>標高3,776メートル。凍てつく風に削られた岩肌。<br>
+      ここが旅の出発点。足元の石の、そのさらに奥深くへ。<br>
+      息を止めて、地球の内側へ潜っていく。</p>
+      <span class="depth-tag">ALT. 3,776 m</span>
+    </div>
+  </div>
+
+  <div class="section" id="sec-bedrock">
+    <div class="section-inner">
+      <div class="en">LAYER 02 — BEDROCK</div>
+      <h2>岩盤</h2>
+      <p>光の届かない地殻の深部。数億年の圧力が鉱脈を編み、<br>
+      石英と長石の結晶が、暗闇の中で静かに眠っている。<br>
+      きらめく鉱物は、地球が刻んだ時間の結晶。</p>
+      <span class="depth-tag">DEPTH − 15 km</span>
+    </div>
+  </div>
+
+  <div class="section" id="sec-magma">
+    <div class="section-inner">
+      <div class="en">LAYER 03 — MAGMA</div>
+      <h2>マグマ</h2>
+      <p>摂氏1,200度。岩石はもはや固体であることをやめた。<br>
+      灼熱の溶岩が脈打ち、火の粉が立ちのぼる。<br>
+      ここは地球の血流。大陸を動かすエネルギーの源泉。</p>
+      <span class="depth-tag">DEPTH − 100 km</span>
+    </div>
+  </div>
+
+  <div class="section" id="sec-mantle">
+    <div class="section-inner">
+      <div class="en">LAYER 04 — MANTLE</div>
+      <h2>マントル</h2>
+      <p>深度2,900キロメートル。液体金属の海が広がる境界。<br>
+      紫と青の光が渦を巻き、まるで宇宙の中にいるかのよう。<br>
+      地球の最深部は、星の内側だった。</p>
+      <span class="depth-tag">DEPTH − 2,900 km</span>
+    </div>
+  </div>
+
+  <div class="section" id="finale">
+    <div class="section-inner">
+      <p>— 地球の中心へ、ようこそ —</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ══════════════════════════════════════════
+   基本セットアップ
+══════════════════════════════════════════ */
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let W = 0, H = 0;          // CSSピクセルでの描画サイズ
+let vignette = null;       // ビネット(周辺減光)のキャッシュ
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  buildVignette();
+}
+
+function buildVignette() {
+  vignette = document.createElement('canvas');
+  vignette.width = W; vignette.height = H;
+  const v = vignette.getContext('2d');
+  const g = v.createRadialGradient(W/2, H/2, Math.min(W,H)*0.35, W/2, H/2, Math.max(W,H)*0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.55)');
+  v.fillStyle = g;
+  v.fillRect(0, 0, W, H);
+}
+
+/* ══════════════════════════════════════════
+   ノイズ (バリューノイズ + fBm)
+══════════════════════════════════════════ */
+function makeNoise(seed) {
+  const perm = new Uint8Array(512);
+  const p = new Uint8Array(256);
+  let s = seed >>> 0;
+  const rand = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) {
+    const j = (rand() * (i + 1)) | 0;
+    const t = p[i]; p[i] = p[j]; p[j] = t;
+  }
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+
+  function noise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const X = xi & 255, Y = yi & 255;
+    x -= xi; y -= yi;
+    const u = x * x * (3 - 2 * x);
+    const v = y * y * (3 - 2 * y);
+    const a = perm[X + perm[Y]]     / 255;
+    const b = perm[X + 1 + perm[Y]] / 255;
+    const c = perm[X + perm[Y + 1]] / 255;
+    const d = perm[X + 1 + perm[Y + 1]] / 255;
+    const ab = a + u * (b - a);
+    const cd = c + u * (d - c);
+    return ab + v * (cd - ab);
+  }
+
+  function fbm(x, y, oct) {
+    let sum = 0, amp = 0.5, tot = 0;
+    for (let o = 0; o < oct; o++) {
+      sum += noise2(x, y) * amp;
+      tot += amp;
+      amp *= 0.5;
+      x *= 2.03; y *= 2.03;
+    }
+    return sum / tot;
+  }
+
+  return { noise2, fbm, rand };
+}
+
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smooth = t => t * t * (3 - 2 * t);
+
+/* ══════════════════════════════════════════
+   階層テクスチャの生成 (オフスクリーン)
+══════════════════════════════════════════ */
+const TEX_W = 640, TEX_H = 1024;
+const textures = [];   // 4階層ぶんの背景テクスチャ
+let lavaGlowA = null;  // マグマ用の発光オーバーレイ(2枚を動かして「ゆらぎ」を作る)
+let lavaGlowB = null;
+
+function newTex() {
+  const c = document.createElement('canvas');
+  c.width = TEX_W; c.height = TEX_H;
+  return c;
+}
+
+/* ── LAYER 0: 山頂 — 石のテクスチャ、リアルな岩肌 ── */
+function genSummit() {
+  const n = makeNoise(1101);
+  const tex = newTex();
+  const g = tex.getContext('2d');
+  const img = g.createImageData(TEX_W, TEX_H);
+  const d = img.data;
+  for (let y = 0; y < TEX_H; y++) {
+    const snowLine = clamp(1 - y / (TEX_H * 0.22), 0, 1); // 上端ほど雪
+    for (let x = 0; x < TEX_W; x++) {
+      const base  = n.fbm(x * 0.008, y * 0.008, 5);                 // 大きな岩の陰影
+      const grain = n.fbm(x * 0.06 + 40, y * 0.06 + 40, 3);         // 細かい石の粒
+      const crack = 1 - Math.abs(2 * n.fbm(x * 0.014 + 90, y * 0.011 + 90, 4) - 1); // 亀裂
+      const strata = 0.5 + 0.5 * Math.sin(y * 0.02 + base * 6);     // 地層の縞
+
+      let v = base * 0.6 + grain * 0.3 + strata * 0.1;
+      let r = lerp(52, 128, v);
+      let gr = lerp(48, 118, v);
+      let b = lerp(44, 104, v);
+
+      // 亀裂を暗く落とす
+      if (crack > 0.86) {
+        const k = (crack - 0.86) / 0.14;
+        r *= 1 - k * 0.65; gr *= 1 - k * 0.65; b *= 1 - k * 0.65;
+      }
+      // 山頂の雪化粧
+      const snow = snowLine * clamp(base * 1.6 - 0.35, 0, 1);
+      r = lerp(r, 235, snow); gr = lerp(gr, 240, snow); b = lerp(b, 248, snow);
+
+      const i = (y * TEX_W + x) * 4;
+      d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+
+  // 空からの淡い光(上端)
+  const sky = g.createLinearGradient(0, 0, 0, TEX_H * 0.3);
+  sky.addColorStop(0, 'rgba(200,220,255,0.35)');
+  sky.addColorStop(1, 'rgba(200,220,255,0)');
+  g.fillStyle = sky;
+  g.fillRect(0, 0, TEX_W, TEX_H * 0.3);
+  return tex;
+}
+
+/* ── LAYER 1: 岩盤 — 鉱脈、結晶、暗い茶色 ── */
+function genBedrock() {
+  const n = makeNoise(2202);
+  const tex = newTex();
+  const g = tex.getContext('2d');
+  const img = g.createImageData(TEX_W, TEX_H);
+  const d = img.data;
+  for (let y = 0; y < TEX_H; y++) {
+    for (let x = 0; x < TEX_W; x++) {
+      const base = n.fbm(x * 0.007, y * 0.007, 5);
+      const grain = n.fbm(x * 0.05 + 70, y * 0.05 + 70, 3);
+      const vein = 1 - Math.abs(2 * n.fbm(x * 0.006 + 30, y * 0.0045 + 30, 4) - 1); // 鉱脈
+      const veinColorSel = n.fbm(x * 0.003 + 200, y * 0.003 + 200, 2);
+
+      let v = base * 0.7 + grain * 0.3;
+      let r = lerp(26, 78, v);
+      let gr = lerp(18, 56, v);
+      let b = lerp(12, 40, v);
+
+      // 鉱脈: 金色とエメラルドの筋
+      if (vein > 0.8) {
+        const k = smooth((vein - 0.8) / 0.2);
+        if (veinColorSel > 0.5) { // 金
+          r = lerp(r, 214, k); gr = lerp(gr, 160, k); b = lerp(b, 62, k);
+        } else {                  // 碧玉
+          r = lerp(r, 60, k); gr = lerp(gr, 190, k); b = lerp(b, 170, k);
+        }
+      }
+      const i = (y * TEX_W + x) * 4;
+      d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+
+  // 結晶を散りばめる
+  const rand = n.rand;
+  for (let c = 0; c < 42; c++) {
+    const cx = rand() * TEX_W;
+    const cy = rand() * TEX_H;
+    const size = 5 + rand() * 16;
+    const ang = rand() * Math.PI;
+    const hue = rand();
+    let col, glow;
+    if (hue < 0.4)      { col = 'rgba(196,150,255,'; glow = 'rgba(160,110,255,'; } // 紫水晶
+    else if (hue < 0.7) { col = 'rgba(130,225,255,'; glow = 'rgba(80,190,255,';  } // 蒼玉
+    else                { col = 'rgba(255,214,120,'; glow = 'rgba(255,190,80,';  } // 黄玉
+
+    // 後光
+    const rg = g.createRadialGradient(cx, cy, 0, cx, cy, size * 3.2);
+    rg.addColorStop(0, glow + '0.45)');
+    rg.addColorStop(1, glow + '0)');
+    g.fillStyle = rg;
+    g.fillRect(cx - size * 3.2, cy - size * 3.2, size * 6.4, size * 6.4);
+
+    // 細長い六角形の結晶体
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(ang);
+    g.beginPath();
+    g.moveTo(0, -size * 1.6);
+    g.lineTo(size * 0.5, -size * 0.7);
+    g.lineTo(size * 0.5,  size * 0.7);
+    g.lineTo(0,  size * 1.6);
+    g.lineTo(-size * 0.5,  size * 0.7);
+    g.lineTo(-size * 0.5, -size * 0.7);
+    g.closePath();
+    g.fillStyle = col + (0.55 + rand() * 0.3) + ')';
+    g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.5)';
+    g.lineWidth = 0.8;
+    g.stroke();
+    // ハイライトの稜線
+    g.beginPath();
+    g.moveTo(0, -size * 1.6);
+    g.lineTo(0, size * 1.6);
+    g.strokeStyle = 'rgba(255,255,255,0.7)';
+    g.stroke();
+    g.restore();
+  }
+  return tex;
+}
+
+/* ── LAYER 2: マグマ — 溶岩、オレンジ・赤 ── */
+function genMagma() {
+  const n = makeNoise(3303);
+  const tex = newTex();
+  const g = tex.getContext('2d');
+  const img = g.createImageData(TEX_W, TEX_H);
+  const d = img.data;
+  for (let y = 0; y < TEX_H; y++) {
+    for (let x = 0; x < TEX_W; x++) {
+      const base = n.fbm(x * 0.008, y * 0.006, 4);
+      const ridge = 1 - Math.abs(2 * n.fbm(x * 0.0055 + 50, y * 0.004 + 50, 4) - 1);
+      const lava = Math.pow(ridge, 3.2); // 溶岩の網目
+
+      // 黒く焼けた岩肌 + 赤熱の下地
+      let r = lerp(24, 78, base) + base * 30;
+      let gr = lerp(8, 26, base);
+      let b = lerp(4, 14, base);
+
+      if (lava > 0.28) {
+        const k = clamp((lava - 0.28) / 0.72, 0, 1);
+        // 深紅 → 橙 → 白熱黄 のグラデーション
+        if (k < 0.5) {
+          const t = k / 0.5;
+          r = lerp(r, 255, t); gr = lerp(gr, 96, t); b = lerp(b, 8, t);
+        } else {
+          const t = (k - 0.5) / 0.5;
+          r = 255; gr = lerp(96, 224, t); b = lerp(8, 96, t);
+        }
+      }
+      const i = (y * TEX_W + x) * 4;
+      d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+
+  // ゆらぎ用オーバーレイ2枚(ぼんやりした発光の雲)
+  lavaGlowA = makeLavaGlow(4404, 'rgba(255,110,20,');
+  lavaGlowB = makeLavaGlow(5505, 'rgba(255,60,0,');
+  return tex;
+}
+
+function makeLavaGlow(seed, colPrefix) {
+  const n = makeNoise(seed);
+  const c = document.createElement('canvas');
+  c.width = TEX_W; c.height = TEX_H / 2;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 26; i++) {
+    const x = n.rand() * TEX_W;
+    const y = n.rand() * c.height;
+    const rad = 60 + n.rand() * 160;
+    const a = 0.10 + n.rand() * 0.16;
+    // 縦タイル時に継ぎ目が出ないよう上下にも複製して描く
+    for (const yy of [y - c.height, y, y + c.height]) {
+      const rg = g.createRadialGradient(x, yy, 0, x, yy, rad);
+      rg.addColorStop(0, colPrefix + a + ')');
+      rg.addColorStop(1, colPrefix + '0)');
+      g.fillStyle = rg;
+      g.fillRect(x - rad, yy - rad, rad * 2, rad * 2);
+    }
+  }
+  return c;
+}
+
+/* ── LAYER 3: マントル — 液体金属、紫・青、宇宙的な光 ── */
+function genMantle() {
+  const n = makeNoise(6606);
+  const tex = newTex();
+  const g = tex.getContext('2d');
+  const img = g.createImageData(TEX_W, TEX_H);
+  const d = img.data;
+  for (let y = 0; y < TEX_H; y++) {
+    const deep = y / TEX_H; // 下に行くほど深い
+    for (let x = 0; x < TEX_W; x++) {
+      const swirl = n.fbm(x * 0.005, y * 0.005, 5);
+      const fil = Math.pow(1 - Math.abs(2 * n.fbm(x * 0.007 + 60, y * 0.005 + 60, 4) - 1), 6); // 金属の光条
+
+      // 藍 → 菫 の渦
+      let r = lerp(14, 96, swirl) * (1 - deep * 0.25);
+      let gr = lerp(10, 42, swirl);
+      let b = lerp(46, 158, swirl);
+
+      // 液体金属のフィラメント(シアン〜白)
+      if (fil > 0.12) {
+        const k = clamp((fil - 0.12) / 0.88, 0, 1);
+        r = lerp(r, 150, k); gr = lerp(gr, 220, k); b = lerp(b, 255, k);
+      }
+      const i = (y * TEX_W + x) * 4;
+      d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+
+  // 宇宙のような星の瞬き
+  const rand = n.rand;
+  for (let s = 0; s < 240; s++) {
+    const x = rand() * TEX_W, y = rand() * TEX_H;
+    const sz = rand() * 1.6 + 0.3;
+    const a = 0.25 + rand() * 0.65;
+    g.fillStyle = rand() > 0.5 ? `rgba(255,255,255,${a})` : `rgba(150,200,255,${a})`;
+    g.beginPath();
+    g.arc(x, y, sz, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // 中央の巨大な光源(コアの気配)
+  const core = g.createRadialGradient(TEX_W/2, TEX_H*0.85, 0, TEX_W/2, TEX_H*0.85, TEX_W*0.8);
+  core.addColorStop(0, 'rgba(170,140,255,0.4)');
+  core.addColorStop(0.5, 'rgba(90,70,220,0.15)');
+  core.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = core;
+  g.fillRect(0, 0, TEX_W, TEX_H);
+  return tex;
+}
+
+/* ══════════════════════════════════════════
+   階層の定義と遷移計算
+══════════════════════════════════════════ */
+const BOUNDS = [0.20, 0.50, 0.80]; // 階層境界(進行度)
+const TW = 0.05;                   // 遷移帯の半幅
+
+// [手前の階層, 次の階層, ブレンド率] を返す
+function layerBlend(dep) {
+  for (let k = 0; k < BOUNDS.length; k++) {
+    const b = BOUNDS[k];
+    if (dep > b - TW && dep < b + TW) {
+      return [k, k + 1, smooth((dep - (b - TW)) / (TW * 2))];
+    }
+  }
+  let i = 0;
+  while (i < BOUNDS.length && dep >= BOUNDS[i]) i++;
+  return [i, i, 0];
+}
+
+// 階層内でのローカル進行度 0..1
+function localProgress(dep, i) {
+  const start = i === 0 ? 0 : BOUNDS[i - 1];
+  const end = i === BOUNDS.length ? 1 : BOUNDS[i];
+  return clamp((dep - start) / (end - start), 0, 1);
+}
+
+/* ══════════════════════════════════════════
+   パーティクル
+══════════════════════════════════════════ */
+// タイプ: 0=粉塵(山頂) 1=鉱物の煌めき(岩盤) 2=火の粉(マグマ) 3=光球(マントル)
+const glowSprites = {};
+function makeGlowSprite(key, r, g2, b) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  rg.addColorStop(0, `rgba(255,255,255,1)`);
+  rg.addColorStop(0.25, `rgba(${r},${g2},${b},0.9)`);
+  rg.addColorStop(1, `rgba(${r},${g2},${b},0)`);
+  g.fillStyle = rg;
+  g.fillRect(0, 0, 64, 64);
+  glowSprites[key] = c;
+}
+makeGlowSprite('gold',  255, 200, 90);
+makeGlowSprite('cyan',  110, 220, 255);
+makeGlowSprite('ember', 255, 120, 30);
+makeGlowSprite('violet',170, 130, 255);
+makeGlowSprite('blue',  100, 160, 255);
+
+let particles = [];
+
+function particleCount() {
+  const base = Math.floor((W * H) / 11000);
+  return clamp(REDUCED ? base >> 1 : base, 40, 160);
+}
+
+function spawnParticle(p, type) {
+  p.type = type;
+  p.phase = Math.random() * Math.PI * 2;
+  p.life = 0;
+  switch (type) {
+    case 0: // 粉塵: ゆっくり舞い落ちる
+      p.x = Math.random() * W; p.y = -10;
+      p.vx = (Math.random() - 0.5) * 0.3;
+      p.vy = 0.25 + Math.random() * 0.55;
+      p.r = 0.8 + Math.random() * 1.6;
+      p.maxLife = 900;
+      break;
+    case 1: // 鉱物の煌めき: その場で瞬く
+      p.x = Math.random() * W; p.y = Math.random() * H;
+      p.vx = (Math.random() - 0.5) * 0.08;
+      p.vy = (Math.random() - 0.5) * 0.08;
+      p.r = 1 + Math.random() * 2.2;
+      p.maxLife = 160 + Math.random() * 200;
+      p.sprite = Math.random() > 0.45 ? 'gold' : 'cyan';
+      break;
+    case 2: // 火の粉: 立ちのぼる
+      p.x = Math.random() * W; p.y = H + 10;
+      p.vx = 0;
+      p.vy = -(0.6 + Math.random() * 1.6);
+      p.r = 1.5 + Math.random() * 2.8;
+      p.maxLife = 700;
+      break;
+    case 3: // 光球: 無重力に漂う
+      p.x = Math.random() * W; p.y = Math.random() * H;
+      p.vx = (Math.random() - 0.5) * 0.35;
+      p.vy = (Math.random() - 0.5) * 0.35;
+      p.r = 2 + Math.random() * 5;
+      p.maxLife = 500 + Math.random() * 400;
+      p.sprite = Math.random() > 0.5 ? 'violet' : 'blue';
+      break;
+  }
+}
+
+function dominantType(i0, i1, t) {
+  return Math.random() < t ? i1 : i0;
+}
+
+function updateParticles(i0, i1, t, time) {
+  const want = particleCount();
+  while (particles.length < want) {
+    const p = {};
+    spawnParticle(p, dominantType(i0, i1, t));
+    p.y = Math.random() * H; // 初期投入は画面内に散らす
+    particles.push(p);
+  }
+  if (particles.length > want) particles.length = want;
+
+  ctx.save();
+  for (const p of particles) {
+    p.life++;
+    // 火の粉と粉塵は横に揺れる
+    if (p.type === 2) p.x += Math.sin(time * 2 + p.phase) * 0.6;
+    if (p.type === 0) p.x += Math.sin(time + p.phase) * 0.2;
+    p.x += p.vx; p.y += p.vy;
+
+    const out = p.y < -20 || p.y > H + 20 || p.x < -20 || p.x > W + 20 || p.life > p.maxLife;
+    if (out) { spawnParticle(p, dominantType(i0, i1, t)); continue; }
+
+    const fade = Math.min(p.life / 40, 1) * Math.min((p.maxLife - p.life) / 60, 1);
+    switch (p.type) {
+      case 0: {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.28 * fade;
+        ctx.fillStyle = '#e8e4da';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 1: {
+        const tw = 0.5 + 0.5 * Math.sin(p.life * 0.15 + p.phase);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.8 * tw * fade;
+        const s = glowSprites[p.sprite];
+        const sz = p.r * 6;
+        ctx.drawImage(s, p.x - sz/2, p.y - sz/2, sz, sz);
+        break;
+      }
+      case 2: {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.85 * fade;
+        const sz = p.r * 5;
+        ctx.drawImage(glowSprites.ember, p.x - sz/2, p.y - sz/2, sz, sz);
+        break;
+      }
+      case 3: {
+        const pulse = 0.6 + 0.4 * Math.sin(p.life * 0.04 + p.phase);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.55 * pulse * fade;
+        const sz = p.r * 6;
+        ctx.drawImage(glowSprites[p.sprite], p.x - sz/2, p.y - sz/2, sz, sz);
+        break;
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/* ══════════════════════════════════════════
+   階層ごとの描画
+══════════════════════════════════════════ */
+function drawLayerTexture(i, dep, alpha, time) {
+  const tex = textures[i];
+  if (!tex) return;
+  const lp = localProgress(dep, i);
+  const drawH = H * 1.6;                 // パララックス用に少し大きく描く
+  const offY = -lp * (drawH - H);
+
+  ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = 'source-over';
+
+  if (i === 2 && !REDUCED) {
+    // マグマ: 水平スライスを正弦波でずらして熱のゆらぎを表現
+    const slices = 24;
+    const sh = H / slices;
+    const srcSliceH = (sh / drawH) * TEX_H;
+    for (let s = 0; s < slices; s++) {
+      const y = s * sh;
+      const dx = Math.sin(y * 0.016 + time * 1.8) * 4 * alpha;
+      const srcY = ((y - offY) / drawH) * TEX_H;
+      ctx.drawImage(tex, 0, srcY, TEX_W, srcSliceH, dx, y, W, sh + 1);
+    }
+  } else {
+    ctx.drawImage(tex, 0, 0, TEX_W, TEX_H, 0, offY, W, drawH);
+  }
+
+  // ── 階層固有のダイナミックFX ──
+  if (i === 0) {
+    // 山頂: 上空からの冷たい光
+    ctx.globalAlpha = alpha * 0.5 * (1 - lp);
+    const g = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+    g.addColorStop(0, 'rgba(190,215,255,0.35)');
+    g.addColorStop(1, 'rgba(190,215,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H * 0.5);
+  }
+  else if (i === 1) {
+    // 岩盤: 深くなるほど暗く
+    ctx.globalAlpha = alpha * 0.35 * lp;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+  }
+  else if (i === 2) {
+    // マグマ: ゆらめく発光の雲 + 下からの赤い脈動
+    ctx.globalCompositeOperation = 'lighter';
+    const drift = (time * 26) % H;
+    ctx.globalAlpha = alpha * (0.30 + 0.14 * Math.sin(time * 2.1));
+    ctx.drawImage(lavaGlowA, 0, drift - H, W, H);
+    ctx.drawImage(lavaGlowA, 0, drift, W, H);
+    ctx.globalAlpha = alpha * (0.26 + 0.12 * Math.sin(time * 1.4 + 2));
+    const drift2 = (time * 44) % H;
+    ctx.drawImage(lavaGlowB, 0, H - drift2, W, H);
+    ctx.drawImage(lavaGlowB, 0, -drift2, W, H);
+
+    const pulse = 0.22 + 0.10 * Math.sin(time * 3.2);
+    ctx.globalAlpha = alpha * pulse;
+    const g = ctx.createLinearGradient(0, H, 0, H * 0.35);
+    g.addColorStop(0, 'rgba(255,80,0,0.8)');
+    g.addColorStop(1, 'rgba(255,80,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+  else if (i === 3) {
+    // マントル: オーロラのような光の帯
+    ctx.globalCompositeOperation = 'screen';
+    for (let k = 0; k < 3; k++) {
+      const baseY = H * (0.28 + 0.24 * k) + Math.sin(time * 0.5 + k * 2.1) * H * 0.05;
+      const hueA = k === 1 ? 'rgba(90,140,255,' : 'rgba(150,90,255,';
+      ctx.globalAlpha = alpha * (0.16 + 0.08 * Math.sin(time * 0.8 + k * 1.7));
+      ctx.beginPath();
+      const step = Math.max(24, W / 40);
+      for (let x = -step; x <= W + step; x += step) {
+        const y = baseY + Math.sin(x * 0.004 + time * (0.6 + k * 0.25) + k * 3) * H * 0.05;
+        if (x === -step) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      const g = ctx.createLinearGradient(0, baseY - 90, 0, baseY + 90);
+      g.addColorStop(0, hueA + '0)');
+      g.addColorStop(0.5, hueA + '0.9)');
+      g.addColorStop(1, hueA + '0)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 90;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    // コアの鼓動
+    ctx.globalAlpha = alpha * (0.18 + 0.08 * Math.sin(time * 1.1));
+    const rg = ctx.createRadialGradient(W/2, H*1.05, 0, W/2, H*1.05, H*0.9);
+    rg.addColorStop(0, 'rgba(190,160,255,0.9)');
+    rg.addColorStop(1, 'rgba(190,160,255,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+
+/* ══════════════════════════════════════════
+   HUD 更新
+══════════════════════════════════════════ */
+const depthValueEl = document.getElementById('depth-value');
+const tempValueEl  = document.getElementById('temp-value');
+const gaugeFill    = document.getElementById('gauge-fill');
+const gaugeMarker  = document.getElementById('gauge-marker');
+const gaugeLabels  = document.querySelectorAll('#gauge-labels span');
+const hintEl       = document.getElementById('hint');
+
+// 進行度→標高/深度(m)・温度(℃)。セクションの深度タグと揃えたアンカー補間
+const DEPTH_ANCHORS = [
+  [0.00,     3776], [0.08,        0], [0.20,    -2000], [0.35,   -15000],
+  [0.50,   -40000], [0.65,  -100000], [0.80,  -700000], [1.00, -2900000],
+];
+const TEMP_ANCHORS = [
+  [0.00, -38], [0.20, 15], [0.35, 300], [0.50, 600],
+  [0.65, 1200], [0.80, 2000], [1.00, 3700],
+];
+
+function interpAnchors(anchors, x) {
+  for (let k = 1; k < anchors.length; k++) {
+    if (x <= anchors[k][0]) {
+      const [x0, y0] = anchors[k - 1];
+      const [x1, y1] = anchors[k];
+      return lerp(y0, y1, (x - x0) / (x1 - x0));
+    }
+  }
+  return anchors[anchors.length - 1][1];
+}
+
+function formatNumber(v) {
+  return Math.round(v).toLocaleString('ja-JP');
+}
+
+function updateHUD(dep, i0, i1, t) {
+  const alt = interpAnchors(DEPTH_ANCHORS, dep);
+  if (alt >= 0) {
+    depthValueEl.textContent = `標高 ${formatNumber(alt)} m`;
+  } else if (alt > -100000) {
+    depthValueEl.textContent = `深度 ${formatNumber(-alt)} m`;
+  } else {
+    depthValueEl.textContent = `深度 ${formatNumber(-alt / 1000)} km`;
+  }
+
+  tempValueEl.textContent = `${formatNumber(interpAnchors(TEMP_ANCHORS, dep))} ℃`;
+
+  gaugeFill.style.height = (dep * 100) + '%';
+  gaugeMarker.style.top = (dep * 100) + '%';
+
+  const active = t < 0.5 ? i0 : i1;
+  gaugeLabels.forEach((el, idx) => el.classList.toggle('active', idx === active));
+
+  hintEl.classList.toggle('hidden', dep > 0.02);
+}
+
+/* ══════════════════════════════════════════
+   メインループ
+══════════════════════════════════════════ */
+let targetDep = 0;
+let dep = 0;
+let ready = false;
+
+function readScroll() {
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  targetDep = max > 0 ? clamp(window.scrollY / max, 0, 1) : 0;
+}
+
+window.addEventListener('scroll', readScroll, { passive: true });
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { resize(); readScroll(); }, 100);
+});
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!ready) return;
+  const time = now / 1000;
+
+  // スクロールに滑らかに追従
+  dep += (targetDep - dep) * (REDUCED ? 0.3 : 0.075);
+  if (Math.abs(targetDep - dep) < 0.0002) dep = targetDep;
+
+  const [i0, i1, t] = layerBlend(dep);
+
+  ctx.clearRect(0, 0, W, H);
+  drawLayerTexture(i0, dep, 1, time);
+  if (t > 0) drawLayerTexture(i1, dep, t, time);
+
+  updateParticles(i0, i1, t, time);
+
+  // 周辺減光
+  ctx.globalAlpha = 1;
+  ctx.drawImage(vignette, 0, 0);
+
+  updateHUD(dep, i0, i1, t);
+}
+
+/* ══════════════════════════════════════════
+   セクション文字のフェードイン
+══════════════════════════════════════════ */
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) e.target.classList.toggle('show', e.isIntersecting);
+}, { threshold: 0.25 });
+document.querySelectorAll('.section').forEach(s => io.observe(s));
+
+/* ══════════════════════════════════════════
+   起動: テクスチャを順に生成(UIをブロックしない)
+══════════════════════════════════════════ */
+async function boot() {
+  resize();
+  const tick = () => new Promise(r => setTimeout(r, 0));
+  textures[0] = genSummit();  await tick();
+  textures[1] = genBedrock(); await tick();
+  textures[2] = genMagma();   await tick();
+  textures[3] = genMantle();  await tick();
+  readScroll();
+  ready = true;
+  document.getElementById('loader').classList.add('done');
+}
+
+requestAnimationFrame(frame);
+boot();
+
+})();
+</script>
+</body>
+</html>
