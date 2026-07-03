@@ -978,14 +978,14 @@ function drawLayerTexture(i, dep, alpha, time) {
   const drawH = H * 2.0;
   const offY = -lp * (drawH - H);
 
-  // ── フレーム画像アニメーション ──
+  // ── フレーム画像: スクロール位置に連動 ──
   const frameList = frameLayers[layerNames[i]];
   if (!frameList || frameList.length === 0) return;
-  const frameSpeed = REDUCED ? 1.5 : 1;  // フレーム更新速度
-  const frameIndex = Math.floor((time * frameSpeed) % 3);
+  const frameIndex = Math.floor((dep * 3) % 3);  // スクロール位置で決定
   const currentFrame = frameList[frameIndex];
   const nextFrame = frameList[(frameIndex + 1) % 3];
-  const frameFade = ((time * frameSpeed) % 1);  // 0-1: 現在フレームから次へ
+  // フェードは最小限(安定性重視)
+  const frameFade = (dep * 3 - frameIndex) * 0.3;  // 次フレーム手前で薄くフェード
 
   // ── パースペクティブによる奥行き感 ──
   const depthScale = 0.7 + alpha * 0.3;
