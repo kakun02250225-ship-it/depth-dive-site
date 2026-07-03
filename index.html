@@ -477,7 +477,7 @@ function newTex() {
   return c;
 }
 
-/* ── LAYER 0: 山頂 — 多層テクスチャの岩肌、空は雲が流れる ── */
+/* ── LAYER 0: 山頂 — リアルな風景：空・遠景山・岩肌 ── */
 function genSummit() {
   const n = makeNoise(1101);
   const tex = newTex();
@@ -485,73 +485,99 @@ function genSummit() {
   const img = g.createImageData(TEX_W, TEX_H);
   const d = img.data;
   for (let y = 0; y < TEX_H; y++) {
-    const skyPart = y / (TEX_H * 0.4);  // 上部は空
-    const snowLine = clamp(1 - y / (TEX_H * 0.18), 0, 1);
+    const skyFrac = y / (TEX_H * 0.5);   // 上半分が空
+    const snowLine = clamp(1 - y / (TEX_H * 0.12), 0, 1);
+
     for (let x = 0; x < TEX_W; x++) {
-      // 空の部分: グラデーション + 雲
-      if (skyPart < 1) {
-        const skyCol = lerp(0.4, 0.9, skyPart);  // 暗い青から明るい青
-        const cloud = n.fbm(x * 0.004 + 10, y * 0.004, 4) * 0.8 + 0.2;
-        const skyBr = lerp(120, 200, cloud);
-        let r = lerp(100, 160, skyCol);
-        let gr = lerp(140, 220, skyCol);
-        let b = lerp(180, 255, skyCol);
-        r = lerp(r, 220, skyBr * 0.3);
-        gr = lerp(gr, 220, skyBr * 0.3);
-        b = lerp(b, 220, skyBr * 0.3);
+      // ━━━━━━━━━━━━━ SKY ZONE ━━━━━━━━━━━━━
+      if (skyFrac < 1) {
+        // グラデーション(朝焼けから青空へ)
+        const timeOfDay = 0.5 + 0.3 * Math.sin(x * 0.001);
+        const topCol = lerp(0.3, 0.7, timeOfDay);    // 橙から紫へ
+        const botCol = lerp(0.5, 0.9, timeOfDay);    // 暖色から青へ
+        const skyGrad = lerp(topCol, botCol, skyFrac);
+
+        // 雲: 複数周波数のフラクタル
+        const cloud1 = n.fbm(x * 0.003, y * 0.003, 5);
+        const cloud2 = n.fbm(x * 0.008 + 100, y * 0.008 + 100, 3);
+        const cloud3 = n.fbm(x * 0.015 + 200, y * 0.015 + 200, 2);
+        const cloudNoise = cloud1 * 0.5 + cloud2 * 0.35 + cloud3 * 0.15;
+        const cloudThreshold = 0.5 + skyFrac * 0.3;
+        const cloudBr = cloudNoise > cloudThreshold ? Math.pow((cloudNoise - cloudThreshold) / (1 - cloudThreshold), 0.8) : 0;
+
+        // 背景の遠い山(霞)
+        const distMountain = n.fbm(x * 0.002, y * 0.008, 4);
+        const mountainSilhouette = distMountain > (0.55 - skyFrac * 0.2) ? 0.2 : 0;
+
+        let r = lerp(180, 140, skyGrad);
+        let gr = lerp(160, 180, skyGrad);
+        let b = lerp(100, 220, skyGrad);
+
+        // 雲の白さを加える
+        r = lerp(r, 245, cloudBr * 0.8);
+        gr = lerp(gr, 245, cloudBr * 0.8);
+        b = lerp(b, 245, cloudBr * 0.8);
+
+        // 背景山を霞で表現
+        r -= mountainSilhouette * 60;
+        gr -= mountainSilhouette * 50;
+        b -= mountainSilhouette * 40;
+
         const i = (y * TEX_W + x) * 4;
-        d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+        d[i] = clamp(r, 0, 255); d[i+1] = clamp(gr, 0, 255); d[i+2] = clamp(b, 0, 255); d[i+3] = 255;
       } else {
-        // 岩肌: 多層ノイズで詳細さを出す
-        const base1  = n.fbm(x * 0.006, y * 0.006, 5);
-        const base2  = n.fbm(x * 0.012 + 50, y * 0.012 + 50, 4);
-        const detail = n.fbm(x * 0.05 + 80, y * 0.05 + 80, 3);
-        const micro  = n.fbm(x * 0.15 + 120, y * 0.15 + 120, 2);
-        const crack = 1 - Math.abs(2 * n.fbm(x * 0.014 + 90, y * 0.011 + 90, 4) - 1);
-        const strata = 0.5 + 0.5 * Math.sin(y * 0.025 + base1 * 8);
+        // ━━━━━━━━━━━━━ ROCK ZONE ━━━━━━━━━━━━━
+        // 多層テクスチャで岩肌をリアルに
+        const base1  = n.fbm(x * 0.008, y * 0.008, 6);
+        const base2  = n.fbm(x * 0.015 + 50, y * 0.015 + 50, 4);
+        const detail = n.fbm(x * 0.06 + 80, y * 0.06 + 80, 3);
+        const micro  = n.fbm(x * 0.18 + 120, y * 0.18 + 120, 2);
 
-        let v = base1 * 0.35 + base2 * 0.25 + detail * 0.25 + micro * 0.15;
-        let r = lerp(48, 140, v);
-        let gr = lerp(44, 130, v);
-        let b = lerp(40, 110, v);
+        // 亀裂と断層
+        const crack = Math.pow(1 - Math.abs(2 * n.fbm(x * 0.012 + 90, y * 0.009 + 90, 4) - 1), 2);
+        const fault = n.fbm(x * 0.005, y * 0.012 + 150, 3);
+        const strata = 0.5 + 0.5 * Math.sin(y * 0.03 + base1 * 8);
 
-        // 亀裂と地層
-        if (crack > 0.84) {
-          const k = (crack - 0.84) / 0.16;
-          r *= 1 - k * 0.7; gr *= 1 - k * 0.7; b *= 1 - k * 0.7;
+        // 岩肌の基本色(茶〜灰)
+        const v = base1 * 0.4 + base2 * 0.3 + detail * 0.2 + micro * 0.1;
+        let r = lerp(60, 150, v);
+        let gr = lerp(54, 140, v);
+        let b = lerp(50, 130, v);
+
+        // 地層による色の変化
+        r *= 0.85 + strata * 0.3;
+        gr *= 0.85 + strata * 0.3;
+        b *= 0.85 + strata * 0.3;
+
+        // 亀裂は暗く
+        if (crack > 0.8) {
+          const k = (crack - 0.8) / 0.2;
+          r *= 1 - k * 0.75; gr *= 1 - k * 0.75; b *= 1 - k * 0.75;
         }
-        r *= 0.9 + strata * 0.2; gr *= 0.9 + strata * 0.2; b *= 0.9 + strata * 0.2;
 
-        // 雪化粧
-        const snow = snowLine * clamp(base1 * 1.8 - 0.4, 0, 1);
-        r = lerp(r, 242, snow); gr = lerp(gr, 245, snow); b = lerp(b, 250, snow);
+        // 雪化粧(上部ほど白い)
+        const snow = snowLine * clamp(base1 * 2 - 0.5, 0, 1);
+        r = lerp(r, 248, snow); gr = lerp(gr, 250, snow); b = lerp(b, 252, snow);
 
         const i = (y * TEX_W + x) * 4;
-        d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+        d[i] = clamp(r, 0, 255); d[i+1] = clamp(gr, 0, 255); d[i+2] = clamp(b, 0, 255); d[i+3] = 255;
       }
     }
   }
   g.putImageData(img, 0, 0);
 
-  // 山頂からの空のグラデーション光
-  const sky = g.createLinearGradient(0, 0, 0, TEX_H * 0.4);
-  sky.addColorStop(0, 'rgba(220,235,255,0.5)');
-  sky.addColorStop(0.8, 'rgba(150,200,255,0.2)');
-  sky.addColorStop(1, 'rgba(150,200,255,0)');
-  g.fillStyle = sky;
-  g.fillRect(0, 0, TEX_W, TEX_H * 0.4);
-
-  // 山影
-  const shadow = g.createLinearGradient(0, TEX_H * 0.3, 0, TEX_H * 0.5);
-  shadow.addColorStop(0, 'rgba(0,0,0,0)');
-  shadow.addColorStop(1, 'rgba(0,0,0,0.2)');
-  g.fillStyle = shadow;
-  g.fillRect(0, TEX_H * 0.3, TEX_W, TEX_H * 0.2);
+  // 大気スケッチング(奥行き感)
+  const atmo = g.createLinearGradient(0, 0, 0, TEX_H);
+  atmo.addColorStop(0, 'rgba(240,245,255,0.4)');
+  atmo.addColorStop(0.4, 'rgba(200,220,245,0.15)');
+  atmo.addColorStop(1, 'rgba(100,120,140,0.3)');
+  g.fillStyle = atmo;
+  g.fillRect(0, 0, TEX_W, TEX_H);
 
   return tex;
 }
 
-/* ── LAYER 1: 岩盤 — 鉱脈、結晶、地下水の流れ ── */
+/* ── LAYER 1: 岩盤 — リアルな岩肌、光沢を持つ鉱脈、地下水 ── */
 function genBedrock() {
   const n = makeNoise(2202);
   const tex = newTex();
@@ -560,40 +586,68 @@ function genBedrock() {
   const d = img.data;
   for (let y = 0; y < TEX_H; y++) {
     for (let x = 0; x < TEX_W; x++) {
-      const base = n.fbm(x * 0.007, y * 0.007, 5);
-      const grain = n.fbm(x * 0.05 + 70, y * 0.05 + 70, 3);
-      const micro = n.fbm(x * 0.12 + 100, y * 0.12 + 100, 2);
+      // 多層ノイズで複雑な岩肌表現
+      const base1 = n.fbm(x * 0.009, y * 0.009, 6);
+      const base2 = n.fbm(x * 0.018 + 50, y * 0.018 + 50, 4);
+      const detail = n.fbm(x * 0.07 + 80, y * 0.07 + 80, 3);
+      const micro = n.fbm(x * 0.2 + 120, y * 0.2 + 120, 2);
+
+      // 鉱脈パターン
       const vein = 1 - Math.abs(2 * n.fbm(x * 0.006 + 30, y * 0.0045 + 30, 4) - 1);
-      const water = n.fbm(x * 0.004 + 150, y * 0.008 + 150, 3);  // 地下水の流れ
       const veinColorSel = n.fbm(x * 0.003 + 200, y * 0.003 + 200, 2);
 
-      let v = base * 0.5 + grain * 0.35 + micro * 0.15;
-      let r = lerp(20, 90, v);
-      let gr = lerp(14, 68, v);
-      let b = lerp(8, 50, v);
+      // 地下水の流れ(縦方向)
+      const waterFlow = n.fbm(x * 0.005, y * 0.012 + 150, 4);
 
-      // 鉱脈: 金色・エメラルド・紅玉
-      if (vein > 0.78) {
-        const k = smooth((vein - 0.78) / 0.22);
+      // 地層の筋
+      const strata = 0.5 + 0.5 * Math.sin(y * 0.035 + base1 * 10);
+
+      // 岩肌の基本色
+      const v = base1 * 0.4 + base2 * 0.3 + detail * 0.2 + micro * 0.1;
+      let r = lerp(35, 95, v);
+      let gr = lerp(30, 85, v);
+      let b = lerp(25, 75, v);
+
+      // 地層による色の周期変化
+      r = lerp(r, r * 1.2, Math.abs(Math.sin(strata * 6)));
+      gr *= 0.9 + strata * 0.2;
+      b *= 0.85 + strata * 0.25;
+
+      // 鉱脈: 色鮮やかに
+      if (vein > 0.76) {
+        const k = smooth((vein - 0.76) / 0.24);
         if (veinColorSel < 0.33) {      // 金
-          r = lerp(r, 220, k); gr = lerp(gr, 170, k); b = lerp(b, 50, k);
-        } else if (veinColorSel < 0.66) { // 碧玉
-          r = lerp(r, 50, k); gr = lerp(gr, 200, k); b = lerp(b, 180, k);
+          r = lerp(r, 240, k); gr = lerp(gr, 190, k); b = lerp(b, 40, k);
+        } else if (veinColorSel < 0.66) { // エメラルド
+          r = lerp(r, 40, k); gr = lerp(gr, 220, k); b = lerp(b, 200, k);
         } else {                          // 紅玉
-          r = lerp(r, 200, k); gr = lerp(gr, 80, k); b = lerp(b, 100, k);
+          r = lerp(r, 220, k); gr = lerp(gr, 70, k); b = lerp(b, 110, k);
         }
+        // 鉱脈に光沢を足す
+        r += k * 30; gr += k * 30; b += k * 30;
       }
-      // 地下水が通る箇所は薄い青緑
-      if (water > 0.65) {
-        const wk = smooth((water - 0.65) / 0.35);
-        r = lerp(r, 80, wk * 0.25); gr = lerp(gr, 140, wk * 0.25); b = lerp(b, 130, wk * 0.25);
+
+      // 地下水の流れ: 薄い青緑
+      if (waterFlow > 0.62) {
+        const wk = smooth((waterFlow - 0.62) / 0.38);
+        r = lerp(r, 70, wk * 0.3);
+        gr = lerp(gr, 150, wk * 0.3);
+        b = lerp(b, 140, wk * 0.3);
       }
 
       const i = (y * TEX_W + x) * 4;
-      d[i] = r; d[i+1] = gr; d[i+2] = b; d[i+3] = 255;
+      d[i] = clamp(r, 0, 255); d[i+1] = clamp(gr, 0, 255); d[i+2] = clamp(b, 0, 255); d[i+3] = 255;
     }
   }
   g.putImageData(img, 0, 0);
+
+  // 光と影のスケッチング
+  const lighting = g.createLinearGradient(0, 0, 0, TEX_H);
+  lighting.addColorStop(0, 'rgba(255,240,200,0.15)');
+  lighting.addColorStop(0.5, 'rgba(200,200,200,0)');
+  lighting.addColorStop(1, 'rgba(0,0,0,0.25)');
+  g.fillStyle = lighting;
+  g.fillRect(0, 0, TEX_W, TEX_H);
 
   // 結晶を散りばめる
   const rand = n.rand;
